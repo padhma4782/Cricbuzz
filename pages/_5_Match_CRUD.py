@@ -9,8 +9,7 @@ from utils.db_connection import get_connection
 def fetch_dropdown_data():
     conn = get_connection()
     if conn is None or not conn.is_connected():
-        st.warning(" Reconnecting to database...")
-        conn = get_connection()
+        st.warning("Not connected to database...")
     try:
         cursor = conn.cursor(dictionary=True)
 
@@ -22,59 +21,72 @@ def fetch_dropdown_data():
 
         cursor.execute("SELECT venue_id, ground FROM Venues")
         venues = cursor.fetchall()
-    except mysql.connector.Error as err:
-        st.error(f"Database error: {err}")
+    except Exception as e:
+            st.error(f"Error executing query: {e}") 
     finally:
-        if conn and conn.is_connected():
-            conn.commit()
-            cursor.close()
         cursor.close()
-    #conn.close()
-
+       
+    
     return series, teams, venues
 
 @st.cache_data(ttl=60)
 def fetch_all_matches():
-    conn = get_connection()
-    df = pd.read_sql("SELECT * FROM Matches", conn)
-    #conn.close()
+    try:
+        conn = get_connection()
+        df = pd.read_sql("SELECT * FROM Matches", conn)
+    except Exception as e:
+            st.error(f"Error executing query: {e}") 
     return df
 
 @st.cache_data(ttl=60)
 def insert_match(data):
-    conn = get_connection()
-    cursor = conn.cursor()
-    sql = """
-        INSERT INTO Matches 
-        (match_id, series_id, match_desc, match_format, start_date, end_date, 
-         state, status, team1_id, team2_id, venue_id, curr_bat_team_id, state_title)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-    """
-    cursor.execute(sql, data)
-    conn.commit()
-    #conn.close()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        sql = """
+            INSERT INTO Matches 
+            (match_id, series_id, match_desc, match_format, start_date, end_date, 
+            state, status, team1_id, team2_id, venue_id, curr_bat_team_id, state_title)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """
+        cursor.execute(sql, data)
+    except Exception as e:
+            st.error(f"Error executing query: {e}") 
+    finally:
+        cursor.close()
+        conn.commit()
+
 
 
 def update_match(data):
-    conn = get_connection()
-    cursor = conn.cursor()
-    sql = """
-        UPDATE Matches SET 
-            series_id=%s, match_desc=%s, match_format=%s, start_date=%s, end_date=%s,
-            state=%s, status=%s, team1_id=%s, team2_id=%s, venue_id=%s, curr_bat_team_id=%s, state_title=%s
-        WHERE match_id=%s
-    """
-    cursor.execute(sql, data)
-    conn.commit()
-    #conn.close()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        sql = """
+            UPDATE Matches SET 
+                series_id=%s, match_desc=%s, match_format=%s, start_date=%s, end_date=%s,
+                state=%s, status=%s, team1_id=%s, team2_id=%s, venue_id=%s, curr_bat_team_id=%s, state_title=%s
+            WHERE match_id=%s
+        """
+        cursor.execute(sql, data)
+    except Exception as e:
+            st.error(f"Error executing query: {e}") 
+    finally:
+        cursor.close()
+        conn.commit()
+
 
 @st.cache_data(ttl=60)
 def delete_match(match_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM Matches WHERE match_id = %s", (match_id,))
-    conn.commit()
-    #conn.close()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM Matches WHERE match_id = %s", (match_id,))
+    except Exception as e:
+            st.error(f"Error executing query: {e}") 
+    finally:
+        cursor.close()
+        conn.commit()
 
 
 # UI

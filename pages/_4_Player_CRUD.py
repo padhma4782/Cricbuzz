@@ -7,19 +7,17 @@ from utils.db_connection import get_connection
 def run_query(query, params=None, fetch=False):
     conn = get_connection()
     if conn is None or not conn.is_connected():
-        st.warning(" Reconnecting to database...")
-        conn = get_connection()
-    try:
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(query, params or ())
-        data = cursor.fetchall() if fetch else None
-    except mysql.connector.Error as err:
-        st.error(f"Database error: {err}")
-    finally:
-        if conn and conn.is_connected():
-            conn.commit()
+        st.warning(" Not connected to the database.")
+    else:
+        try:
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(query, params or ())
+            data = cursor.fetchall() if fetch else None
+        except Exception as e:
+            st.error(f"Error executing query: {e}")
+        finally:
             cursor.close()
-            #conn.close()    
+            conn.commit()
     return data
 
 # ---------------------- CREATE Operation ----------------------

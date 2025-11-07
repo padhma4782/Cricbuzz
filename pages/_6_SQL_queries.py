@@ -4,8 +4,11 @@ from utils.db_connection import get_connection
 
 #@st.cache_data(ttl=60)
 def run_query(query):
+    
     try:
         conn = get_connection()
+        if conn is None or not conn.is_connected():
+            st.error("No database connection available.")
         df = pd.read_sql(query, conn)
         return df
     except Exception as e:
@@ -99,8 +102,8 @@ queries = {
         ELSE NULL
         END AS victory_type,  v.ground AS venue,FROM_UNIXTIME(m.start_date / 1000) AS match_date
         FROM Matches m
-        JOIN Teams t1 ON m.team1_id = t1.team_id
-        JOIN Teams t2 ON m.team2_id = t2.team_id
+        JOIN Teamsp t1 ON m.team1_id = t1.team_id
+        JOIN Teamsp t2 ON m.team2_id = t2.team_id
         JOIN Venues v ON m.venue_id = v.venue_id
         WHERE m.state = 'Complete'
         ORDER BY m.start_date DESC;
@@ -259,7 +262,309 @@ queries = {
     -- WHERE matches_played >= 5
     ORDER BY player_name, match_year;
     """,
-    
+
+    "17 Toss decision impact on match outcome": 
+    """
+        WITH Toss_Data AS (
+            SELECT
+                m.match_id,
+                m.status,
+                TRIM(SUBSTRING_INDEX(m.status, ' won', 1)) AS winning_team,
+                m.toss_winner AS toss_winner_team,
+                m.toss_decision AS toss_decision
+            FROM Matches m
+            WHERE m.status LIKE '%won by%' AND m.toss_winner IS NOT NULL
+            ),
+        Toss_Stats AS (
+            SELECT
+                toss_decision,
+                COUNT(*) AS total_matches,
+                SUM(CASE WHEN winning_team = toss_winner_team THEN 1 ELSE 0 END) AS toss_winner_won
+            FROM Toss_Data
+            GROUP BY toss_decision
+        )
+        SELECT
+            toss_decision AS decision,
+            total_matches,
+            toss_winner_won,
+            ROUND((toss_winner_won / total_matches) * 100, 2) AS win_percentage
+        FROM Toss_Stats
+        ORDER BY win_percentage DESC;
+    """,
+    "18 most economical bowlers": 
+    """
+        SELECT  
+            p.player_id,
+            p.player_name,
+            COUNT(bs.match_id) AS matches_bowled,
+            SUM(bs.overs_bowled) AS total_overs,
+            SUM(bs.runs_conceded) AS total_runs_conceded,
+            SUM(bs.wickets_taken) AS total_wickets,
+            ROUND(SUM(bs.runs_conceded) / SUM(bs.overs_bowled), 2) AS economy_rate
+        FROM Bowling_Scorecard bs
+        JOIN Players p ON p.player_id = bs.player_id
+        JOIN Matches m ON m.match_id = bs.match_id
+        WHERE m.match_format IN ('ODI', 'T20')
+        GROUP BY p.player_id, p.player_name
+        HAVING 
+            -- COUNT(bs.match_id) >= 10   AND                   -- at least 10 matches  
+            (SUM(bs.overs_bowled) / COUNT(bs.match_id)) >= 2  -- bowled 2+ overs per match on avg
+            AND SUM(bs.overs_bowled) > 0
+        ORDER BY economy_rate ASC, total_wickets DESC;
+    """,
+    "19 batsmen are most consistent in their scoring": 
+    """
+    SELECT 
+        p.player_id,
+        p.player_name,
+        COUNT(b.match_id) AS innings_played,
+        AVG(b.runs) AS avg_runs,
+        STDDEV(b.runs) AS stddev_runs
+    FROM Batting_Scorecard b
+    JOIN Players p ON p.player_id = b.player_id
+    JOIN Matches m ON m.match_id = b.match_id
+    WHERE b.balls >= 10          -- minimum balls faced per innings
+    AND m.start_date >= UNIX_TIMESTAMP('2022-01-01') * 1000  -- matches since 2022
+    GROUP BY p.player_id, p.player_name
+    -- HAVING COUNT(b.match_id) >= 5      -- played at least 5 innings
+    ORDER BY stddev_runs ASC, avg_runs DESC;
+
+    """,
+    "20 Player Match analysis": 
+    """
+       SELECT 
+            p.player_id,
+            p.player_name,
+
+            /* Match counts */
+            SUM(CASE WHEN s.matchtype = 'Test' THEN s.matches ELSE 0 END) AS test_matches,
+            SUM(CASE WHEN s.matchtype = 'ODI' THEN s.matches ELSE 0 END) AS odi_matches,
+            SUM(CASE WHEN s.matchtype = 'T20' THEN s.matches ELSE 0 END) AS t20_matches,
+
+            /*  Batting averages */
+            AVG(CASE WHEN s.matchtype = 'Test' THEN s.batting_avg END) AS test_batting_avg,
+            AVG(CASE WHEN s.matchtype = 'ODI' THEN s.batting_avg END) AS odi_batting_avg,
+            AVG(CASE WHEN s.matchtype = 'T20' THEN s.batting_avg END) AS t20_batting_avg
+
+        FROM Players p
+        LEFT JOIN Player_Stats_Summary s 
+            ON p.player_id = s.player_id
+
+        GROUP BY p.player_id, p.player_name
+
+        HAVING 
+            (test_matches + odi_matches + t20_matches) > 0   -- show players who played any format
+        ORDER BY p.player_name;
+
+    """,
+    "21 Rank of Players Based on Combined Batting and Bowling Performance": 
+    """
+        WITH batting AS (
+            SELECT
+                player_id,
+                SUM(runs) AS total_runs,
+                AVG(batting_avg) AS avg_batting_avg,
+                AVG(strike_rate) AS avg_strike_rate
+            FROM Player_Stats_Summary
+            GROUP BY player_id
+        ),
+
+        bowling_raw AS (
+            SELECT
+                player_id,
+                SUM(runs_conceded) AS total_runs_conceded,
+                SUM(overs_bowled) AS total_overs_bowled,
+                SUM(wickets_taken) AS total_wickets
+            FROM Bowling_Scorecard
+            GROUP BY player_id
+        ),
+
+        bowling AS (
+            SELECT
+                player_id,
+                total_wickets,
+                CASE 
+                    WHEN total_overs_bowled > 0 
+                    THEN total_runs_conceded / total_overs_bowled
+                    ELSE NULL
+                END AS economy_rate
+            FROM bowling_raw
+        ),
+
+        bowling_avg AS (
+            SELECT
+                player_id,
+                AVG(bowling_avg) AS avg_bowling_avg
+            FROM Player_Stats_Summary
+            GROUP BY player_id
+        ),
+
+        joined AS (
+            SELECT
+                p.player_id,
+                p.player_name,
+
+                -- Batting fields
+                b.total_runs,
+                b.avg_batting_avg,
+                b.avg_strike_rate,
+
+                -- Bowling fields
+                br.total_wickets,
+                ba.avg_bowling_avg,
+                br.economy_rate
+
+            FROM Players p
+            LEFT JOIN batting b ON b.player_id = p.player_id
+            LEFT JOIN bowling br ON br.player_id = p.player_id
+            LEFT JOIN bowling_avg ba ON ba.player_id = p.player_id
+        )
+
+        SELECT
+            player_id,
+            player_name,
+            total_runs,
+            avg_batting_avg,
+            avg_strike_rate,
+            total_wickets,
+            avg_bowling_avg,
+            economy_rate,
+
+            /* Batting Score */
+            (COALESCE(total_runs,0) * 0.01) +
+            (COALESCE(avg_batting_avg,0) * 0.5) +
+            (COALESCE(avg_strike_rate,0) * 0.3) AS batting_points,
+
+            /* Bowling Score */
+            (COALESCE(total_wickets,0) * 2) +
+            ((50 - COALESCE(avg_bowling_avg,50)) * 0.5) +
+            ((6 - COALESCE(economy_rate,6)) * 2) AS bowling_points,
+
+            /* Final Score (Batting + Bowling) */
+            (
+                (COALESCE(total_runs,0) * 0.01) +
+                (COALESCE(avg_batting_avg,0) * 0.5) +
+                (COALESCE(avg_strike_rate,0) * 0.3) +
+                (COALESCE(total_wickets,0) * 2) +
+                ((50 - COALESCE(avg_bowling_avg,50)) * 0.5) +
+                ((6 - COALESCE(economy_rate,6)) * 2)
+            ) AS final_score
+
+        FROM joined
+        ORDER BY final_score DESC;
+
+    """,
+     "23 Player Form": 
+    """
+    WITH last_10 AS (
+    SELECT 
+        rb.player_id,
+        rb.match_id,
+        CAST(SUBSTRING_INDEX(rb.score, '(', 1) AS UNSIGNED) AS runs,
+        bs.balls,
+        (CAST(SUBSTRING_INDEX(rb.score, '(', 1) AS UNSIGNED) / bs.balls) * 100 AS strike_rate
+    FROM Recent_Batting rb
+    JOIN Batting_Scorecard bs 
+        ON rb.player_id = bs.player_id AND rb.match_id = bs.match_id
+    ),
+    ranked AS (
+        SELECT *,
+            ROW_NUMBER() OVER (PARTITION BY player_id ) AS rn
+        FROM last_10
+    ),
+    filtered AS (
+        SELECT * FROM ranked WHERE rn <= 10
+    ),
+
+    agg_summary AS (
+        SELECT 
+            player_id,
+            AVG(CASE WHEN rn <= 5 THEN runs END) AS avg_last_5,
+            AVG(runs) AS avg_last_10,
+            AVG(strike_rate) AS avg_strike_rate,
+            SUM(CASE WHEN runs >= 50 THEN 1 ELSE 0 END) AS fifties_last_10,
+            STDDEV(runs) AS consistency_stddev
+        FROM filtered
+        GROUP BY player_id
+    ),
+
+    categorized AS (
+        SELECT 
+            a.player_id,
+            a.avg_last_5,
+            a.avg_last_10,
+            a.avg_strike_rate,
+            a.fifties_last_10,
+            a.consistency_stddev,
+
+            CASE 
+                WHEN a.avg_last_5 >= 60 AND a.avg_last_10 >= 50 AND a.consistency_stddev <= 15 THEN 'Excellent Form'
+                WHEN a.avg_last_5 >= 40 AND a.avg_last_10 >= 35 THEN 'Good Form'
+                WHEN a.avg_last_5 BETWEEN 25 AND 40 THEN 'Average Form'
+                ELSE 'Poor Form'
+            END AS form_status
+        FROM agg_summary a
+    )
+
+    SELECT 
+        p.player_name,
+        c.*
+    FROM categorized c
+    JOIN Players p ON c.player_id = p.player_id
+    ORDER BY c.avg_last_5 DESC;
+
+    """,
+    "24 Partnership Analysis": 
+    """
+     WITH partnerships AS (
+    SELECT
+        b1.match_id,
+        b1.innings_id,
+        b1.player_id AS player1_id,
+        p1.player_name AS player1_name,
+        b2.player_id AS player2_id,
+        p2.player_name AS player2_name,
+        (b1.runs + b2.runs) AS partnership_runs
+    FROM Batting_Scorecard b1
+    JOIN Batting_Scorecard b2 
+        ON b1.match_id = b2.match_id
+        AND b1.innings_id = b2.innings_id
+        AND b2.batting_position = b1.batting_position + 1  -- consecutive batsmen
+    JOIN Players p1 ON b1.player_id = p1.player_id
+    JOIN Players p2 ON b2.player_id = p2.player_id
+        ),
+
+        agg AS (
+            SELECT
+                player1_id,
+                player2_id,
+                player1_name,
+                player2_name,
+                COUNT(*) AS partnership_count,
+                AVG(partnership_runs) AS avg_partnership_runs,
+                SUM(CASE WHEN partnership_runs >= 50 THEN 1 ELSE 0 END) AS fifty_plus_count,
+                MAX(partnership_runs) AS highest_partnership,
+                (SUM(CASE WHEN partnership_runs >= 50 THEN 1 ELSE 0 END) / COUNT(*)) * 100
+                    AS success_rate
+            FROM partnerships
+            GROUP BY 
+                player1_id, player2_id, 
+                player1_name, player2_name
+        ),
+
+        ranked AS (
+            SELECT *,
+                DENSE_RANK() OVER (ORDER BY success_rate DESC, avg_partnership_runs DESC) AS partnership_rank
+            FROM agg
+        )
+
+        SELECT *
+        FROM ranked
+        ORDER BY partnership_rank, success_rate DESC;
+
+    """,
+
+
 }
 
 
