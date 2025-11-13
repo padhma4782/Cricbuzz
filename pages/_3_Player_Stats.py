@@ -72,7 +72,6 @@ def rows_to_df(section: dict):
     return pd.DataFrame(data, columns=cols)
 
 def safe_get(d, *keys, default=""):
-    """Safe get nested simple: safe_get(d,'a','b') -> d.get('a',{}).get('b',default)"""
     cur = d
     for k in keys:
         if not isinstance(cur, dict):
@@ -88,7 +87,7 @@ def app():
         st.info("Type a player name above to search the Cricbuzz player api.")
         return
 
-    # Search
+    # Search for player by name
     search_result = search_players_api(q.strip())
     if "error" in search_result:
         st.error(search_result["error"])
@@ -126,7 +125,7 @@ def app():
         st.error(details.get("error", "Failed to fetch player details."))
         return
 
-    # Basic profile
+    # Display basic profile of player
     st.header(safe_get(details, "name", default="Unknown Player"))
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -145,7 +144,7 @@ def app():
 
     st.markdown("---")
 
-    # Recent batting
+    # Display Recent batting performance
     df_bat = rows_to_df(details.get("recentBatting", {}))
     if df_bat is not None and not df_bat.empty:
         st.subheader("Recent Batting Performance")
@@ -153,7 +152,7 @@ def app():
     else:
         st.info("No recent batting rows available for this player.")
 
-    # Recent bowling
+    # Display Recent bowling performance
     df_bowl = rows_to_df(details.get("recentBowling", {}))
     if df_bowl is not None and not df_bowl.empty:
         st.subheader("Recent Bowling Performance")
@@ -161,7 +160,7 @@ def app():
     else:
         st.info("No recent bowling rows available for this player.")
 
-    # Get Rankings
+    # Get Player Ranking info
     rankings = details.get("rankings")
     if isinstance(rankings, dict):
         st.subheader("Rankings (if available)")
