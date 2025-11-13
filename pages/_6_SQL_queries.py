@@ -200,7 +200,7 @@ queries = {
             END AS margin_type
             FROM Matches
             WHERE status LIKE '%won by%'
-        ),
+        ), -- Extract winning team and victory margin from text
 
     Filtered_Close AS (
     SELECT *
@@ -208,9 +208,9 @@ queries = {
     WHERE 
         (margin_type = 'runs' AND margin_value < 50)
         OR (margin_type = 'wickets' AND margin_value < 5)
-    )
+    ) -- Filter only the close matches
 
-    SELECT
+    SELECT   -- calculate batting stats for players in those matches.
         p.player_name,
         COUNT(DISTINCT bs.match_id) AS close_matches_played,
         ROUND(AVG(bs.runs), 2) AS avg_runs_in_close_matches,
@@ -223,11 +223,10 @@ queries = {
     GROUP BY p.player_name
     HAVING close_matches_played > 0
     ORDER BY avg_runs_in_close_matches DESC;
-
     """,
     "16 players' batting performance over different years": 
     """
-    WITH Player_Performance AS (
+    WITH Player_Performance AS ( -- Get Player Performance Data
     SELECT
         p.player_id,
         p.player_name,
@@ -245,7 +244,7 @@ queries = {
     WHERE YEAR(FROM_UNIXTIME(m.start_date / 1000)) >= 2020
     ),
 
-    Aggregated_Stats AS (
+    Aggregated_Stats AS ( -- Calculate Aggregated Stats over player performance data
     SELECT
         player_id,
         player_name,
@@ -256,7 +255,7 @@ queries = {
     FROM Player_Performance
     GROUP BY player_id, player_name, match_year
     )
-
+    -- Final Selection and Ordering
     SELECT player_name,match_year,matches_played,avg_runs_per_match,avg_strike_rate
     FROM Aggregated_Stats
     -- WHERE matches_played >= 5
@@ -418,9 +417,9 @@ queries = {
             LEFT JOIN batting b ON b.player_id = p.player_id
             LEFT JOIN bowling br ON br.player_id = p.player_id
             LEFT JOIN bowling_avg ba ON ba.player_id = p.player_id
-        )
+        ),
 
-        SELECT
+        FINAL_SCORE AS (SELECT
             player_id,
             player_name,
             total_runs,
@@ -449,9 +448,12 @@ queries = {
                 ((50 - COALESCE(avg_bowling_avg,50)) * 0.5) +
                 ((6 - COALESCE(economy_rate,6)) * 2)
             ) AS final_score
-
         FROM joined
-        ORDER BY final_score DESC;
+        ORDER BY final_score DESC)
+        
+        Select *,
+        		DENSE_RANK() over (order by final_score desc) as rating
+		From FINAL_SCORE; 
 
     """,
      "23 Player Form": 
@@ -563,6 +565,44 @@ queries = {
         ORDER BY partnership_rank, success_rate DESC;
 
     """,
+    "25 Yearly player Performance Analysis":
+    """
+        with Yearly_performance as (
+        select bs.player_id as playerID,p.player_name as playerName,m.match_format as match_format,avg(runs)as yearly_avg_runs,avg(strike_rate), 
+        YEAR(FROM_UNIXTIME(m.start_date  / 1000)) AS yeardetail
+        from Batting_Scorecard bs
+        join Matches m on bs.match_id=m.match_id 
+        join players p on bs.player_id=p.player_id
+        -- condition for start date
+        group by bs.player_id,m.match_format,YEAR(FROM_UNIXTIME(m.start_date  / 1000))
+        order by bs.player_id
+        ),
+        Performance_Trend AS (
+            SELECT
+                yp.playerID,
+                yp.playerName,
+                yp.match_format,
+                yp.yeardetail,
+                yp.yearly_avg_runs,
+                LAG(yp.yearly_avg_runs) OVER (PARTITION BY yp.playerId, yp.match_format ORDER BY yp.yeardetail) AS prev_year_avg
+            FROM Yearly_Performance yp
+        )
+        SELECT
+            playerId,
+            playerName,
+            match_format,
+            yeardetail,
+            yearly_avg_runs,
+            prev_year_avg,
+            CASE
+            WHEN prev_year_avg IS NULL THEN 'No Prior Data'
+            WHEN yearly_avg_runs > prev_year_avg THEN 'Ascending'
+            WHEN yearly_avg_runs < prev_year_avg THEN 'Descending'
+            ELSE 'Stable'
+            END AS career_trend
+        FROM Performance_Trend
+        ORDER BY playerId, match_format, yeardetail;
+""",
 
 
 }
