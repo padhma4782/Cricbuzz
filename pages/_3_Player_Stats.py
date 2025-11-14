@@ -21,19 +21,11 @@ def search_players_api(name: str):
         j = resp.json()
     except Exception as e:
         return {"error": f"Invalid JSON from search API: {e}"}
-
+    
+    
     # Common patterns: {"player": [...]} or direct list or {"players": [...]}
     if isinstance(j, dict):
-        for key in ("player", "players", "data", "results"):
-            if key in j and isinstance(j[key], list):
-                return {"players": j[key]}
-        # if dict contains direct list under unknown key, try to find first list
-        for v in j.values():
-            if isinstance(v, list):
-                return {"players": v}
-        return {"players": []}
-    elif isinstance(j, list):
-        return {"players": j}
+        return {"players": j["player"]}
     else:
         return {"players": []}
 
